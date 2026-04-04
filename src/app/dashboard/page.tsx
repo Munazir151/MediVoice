@@ -1,3 +1,6 @@
+
+'use client';
+
 import Link from 'next/link';
 import { Navbar } from '@/components/layout/Navbar';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -10,16 +13,28 @@ import {
   AlertTriangle, 
   Activity, 
   User,
-  Plus
+  Plus,
+  Loader2
 } from 'lucide-react';
+import { useFirestore, useUser, useCollection } from '@/firebase';
+import { collection, query, where, orderBy } from 'firebase/firestore';
+import { useMemo } from 'react';
+import { format } from 'date-fns';
 
 export default function DashboardPage() {
-  const historyItems = [
-    { id: 1, date: 'Oct 12, 2024', language: 'Hindi', severity: 'Red', symptoms: 'Severe chest pain, shortness of breath', action: 'ER Recommended' },
-    { id: 2, date: 'Sep 28, 2024', language: 'Bengali', severity: 'Yellow', symptoms: 'Persistent high fever, cough', action: 'GP Consultation' },
-    { id: 3, date: 'Aug 15, 2024', language: 'Marathi', severity: 'Green', symptoms: 'Mild headache, seasonal allergies', action: 'Home Care' },
-    { id: 4, date: 'Jul 04, 2024', language: 'Tamil', severity: 'Green', symptoms: 'Fatigue, minor skin rash', action: 'Observation' },
-  ];
+  const { user } = useUser();
+  const db = useFirestore();
+
+  const triageQuery = useMemo(() => {
+    if (!db || !user) return null;
+    return query(
+      collection(db, 'triageSessions'),
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+  }, [db, user]);
+
+  const { data: historyItems, loading } = useCollection(triageQuery);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -58,17 +73,17 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <div className="text-2xl font-bold">Julian Sterling</div>
-                  <div className="text-sm text-muted-foreground">ID: MV-4829-X</div>
+                  <div className="text-2xl font-bold">{user?.displayName || 'Julian Sterling'}</div>
+                  <div className="text-sm text-muted-foreground">UID: {user?.uid.substring(0, 8)}...</div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Blood Type</div>
-                    <div className="font-bold">O Positive</div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Status</div>
+                    <div className="font-bold text-accent">Active</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Age</div>
-                    <div className="font-bold">32 Years</div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Email</div>
+                    <div className="font-bold truncate text-xs">{user?.email}</div>
                   </div>
                 </div>
               </CardContent>
@@ -82,22 +97,15 @@ export default function DashboardPage() {
               <CardContent className="space-y-6">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Total Sessions</span>
-                  <span className="text-2xl font-bold font-mono">14</span>
+                  <span className="text-2xl font-bold font-mono">{historyItems?.length || 0}</span>
                 </div>
                 <div className="space-y-3">
                   <div className="flex justify-between items-center text-xs">
-                    <span>Critical (Red)</span>
-                    <span className="text-destructive font-bold">1</span>
+                    <span>Active Sessions</span>
+                    <span className="text-primary font-bold">{historyItems?.filter(i => i.status === 'active').length || 0}</span>
                   </div>
                   <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="bg-destructive h-full w-[7%]"></div>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span>Stable (Green)</span>
-                    <span className="text-accent font-bold">11</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="bg-accent h-full w-[78%]"></div>
+                    <div className="bg-primary h-full w-[100%]"></div>
                   </div>
                 </div>
               </CardContent>
@@ -112,20 +120,35 @@ export default function DashboardPage() {
             </div>
             
             <div className="space-y-4">
-              {historyItems.map((item) => (
+              {loading && (
+                <div className="flex justify-center py-20">
+                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                </div>
+              )}
+              
+              {!loading && historyItems?.length === 0 && (
+                <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
+                  <p className="text-muted-foreground">No sessions found. Start your first voice triage!</p>
+                </div>
+              )}
+
+              {historyItems?.map((item) => (
                 <div key={item.id} className="glass-card p-6 rounded-3xl border border-white/5 hover:border-white/15 transition-all group flex items-center gap-6">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border ${getSeverityColor(item.severity)}`}>
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border ${getSeverityColor(item.severityScore)}`}>
                     <AlertTriangle className="w-7 h-7" />
                   </div>
                   <div className="flex-1 space-y-1">
                     <div className="flex items-center gap-3">
-                      <span className="font-bold text-lg">{item.severity} Alert</span>
-                      <Badge variant="outline" className="text-[10px] font-mono border-white/10 uppercase">{item.language}</Badge>
+                      <span className="font-bold text-lg">{item.severityScore} Alert</span>
+                      <Badge variant="outline" className="text-[10px] font-mono border-white/10 uppercase">{item.nativeLanguage}</Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground line-clamp-1">{item.symptoms}</p>
+                    <p className="text-sm text-muted-foreground line-clamp-1">{item.translatedTextEnglish}</p>
                     <div className="flex items-center gap-4 text-[10px] text-muted-foreground/60 uppercase tracking-widest">
-                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {item.date}</span>
-                      <span className="text-primary font-bold">{item.action}</span>
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3 h-3" /> 
+                        {item.createdAt?.toDate ? format(item.createdAt.toDate(), 'MMM dd, yyyy') : 'Recently'}
+                      </span>
+                      <span className="text-primary font-bold">Details</span>
                     </div>
                   </div>
                   <Button variant="ghost" size="icon" className="rounded-xl group-hover:bg-primary/10 transition-colors">
@@ -134,10 +157,6 @@ export default function DashboardPage() {
                 </div>
               ))}
             </div>
-
-            <Button variant="ghost" className="w-full py-8 text-muted-foreground hover:text-primary transition-colors font-medium text-sm">
-              Load More History
-            </Button>
           </div>
         </div>
       </main>

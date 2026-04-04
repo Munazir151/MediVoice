@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from 'react';
@@ -18,6 +19,10 @@ import { patientVoiceSymptomCapture } from '@/ai/flows/patient-voice-symptom-cap
 import { clinicalTriageSeverityAssessment } from '@/ai/flows/clinical-triage-severity-assessment-flow';
 import type { PatientVoiceSymptomCaptureOutput } from '@/ai/flows/patient-voice-symptom-capture-flow';
 import type { ClinicalTriageSeverityAssessmentOutput } from '@/ai/flows/clinical-triage-severity-assessment-flow';
+import { useFirestore, useUser } from '@/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 const LANGUAGES = [
   { name: 'English', code: 'en-US' },
@@ -37,22 +42,20 @@ export function TriageInterface() {
     assessment: ClinicalTriageSeverityAssessmentOutput;
   } | null>(null);
 
+  const { user } = useUser();
+  const db = useFirestore();
+
   const startRecording = () => {
     setIsRecording(true);
     setStep('record');
-    // In a real app, we'd use MediaRecorder API here.
-    // For this prototype, we simulate stopping and processing.
   };
 
   const stopRecording = async () => {
     setIsRecording(false);
     setStep('processing');
     
-    // MOCK: In a real app, this would be a real base64 URI from a recording
-    // We'll simulate the process using placeholder data for the prototype
     try {
       // Step 1: Capture and Translate
-      // (Using a mock base64 for the example, in real use you'd pipe the blob)
       const captureData = await patientVoiceSymptomCapture({
         audioDataUri: "data:audio/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK",
         nativeLanguageCode: selectedLang.code
@@ -64,10 +67,36 @@ export function TriageInterface() {
       });
 
       setResult({ capture: captureData, assessment: assessmentData });
+      
+      // Step 3: Persistence - Save to Firestore
+      if (user && db) {
+        const sessionData = {
+          userId: user.uid,
+          userName: user.displayName || 'Anonymous Patient',
+          nativeLanguage: selectedLang.name,
+          transcribedTextNative: captureData.transcribedTextNative,
+          translatedTextEnglish: captureData.translatedTextEnglish,
+          severityScore: assessmentData.severityScore,
+          guidance: assessmentData.guidance,
+          createdAt: serverTimestamp(),
+          status: 'active'
+        };
+
+        const sessionsRef = collection(db, 'triageSessions');
+        addDoc(sessionsRef, sessionData).catch(async (error) => {
+          const permissionError = new FirestorePermissionError({
+            path: 'triageSessions',
+            operation: 'create',
+            requestResourceData: sessionData,
+          });
+          errorEmitter.emit('permission-error', permissionError);
+        });
+      }
+
       setStep('result');
     } catch (err) {
       console.error(err);
-      setStep('lang'); // Fallback
+      setStep('lang');
     }
   };
 
