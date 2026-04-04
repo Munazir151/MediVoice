@@ -1,0 +1,29 @@
+
+{
+  "placeholderImages": [
+    {
+      "id": "doctor-tablet",
+      "description": "Close-up of a doctor holding a digital tablet showing medical data",
+      "imageUrl": "https://picsum.photos/seed/doctor1/800/600",
+      "imageHint": "doctor hospital"
+    },
+    {
+      "id": "doctor-portrait",
+      "description": "Professional portrait of a senior doctor",
+      "imageUrl": "https://picsum.photos/seed/doctor2/400/400",
+      "imageHint": "doctor portrait"
+    },
+    {
+      "id": "patient-mother",
+      "description": "Candid portrait of a young mother",
+      "imageUrl": "https://picsum.photos/seed/patient1/400/400",
+      "imageHint": "woman smiling"
+    },
+    {
+      "id": "admin-portrait",
+      "description": "Professional headshot of a healthcare administrator",
+      "imageUrl": "https://picsum.photos/seed/admin1/400/400",
+      "imageHint": "business professional"
+    }
+  ]
+}
