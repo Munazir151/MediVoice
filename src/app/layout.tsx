@@ -1,5 +1,9 @@
+
 import type {Metadata} from 'next';
 import './globals.css';
+import { FirebaseClientProvider } from '@/firebase';
+import { Toaster } from '@/components/ui/toaster';
+import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
 
 export const metadata: Metadata = {
   title: 'MediVoice - AI Clinical Triage',
@@ -21,7 +25,11 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body className="font-body antialiased bg-background text-foreground selection:bg-primary/30">
-        {children}
+        <FirebaseClientProvider>
+          <FirebaseErrorListener />
+          {children}
+          <Toaster />
+        </FirebaseClientProvider>
       </body>
     </html>
   );
