@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from 'react';
@@ -33,6 +32,8 @@ const LANGUAGES = [
   { name: 'Kannada', code: 'kn-IN' },
 ];
 
+const WAVEFORM_HEIGHTS = [45, 72, 38, 91, 55, 84, 29, 66, 41, 78, 52, 63];
+
 export function TriageInterface() {
   const [step, setStep] = useState<'lang' | 'record' | 'processing' | 'result'>('lang');
   const [selectedLang, setSelectedLang] = useState(LANGUAGES[0]);
@@ -55,20 +56,17 @@ export function TriageInterface() {
     setStep('processing');
     
     try {
-      // Step 1: Capture and Translate
       const captureData = await patientVoiceSymptomCapture({
         audioDataUri: "data:audio/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK",
         nativeLanguageCode: selectedLang.code
       });
 
-      // Step 2: Severity Assessment
       const assessmentData = await clinicalTriageSeverityAssessment({
         symptomDescription: captureData.translatedTextEnglish
       });
 
       setResult({ capture: captureData, assessment: assessmentData });
       
-      // Step 3: Persistence - Save to Firestore
       if (user && db) {
         const sessionData = {
           userId: user.uid,
@@ -95,7 +93,6 @@ export function TriageInterface() {
 
       setStep('result');
     } catch (err) {
-      console.error(err);
       setStep('lang');
     }
   };
@@ -161,7 +158,7 @@ export function TriageInterface() {
                     <div 
                       key={i}
                       className="w-1.5 bg-primary rounded-full animate-waveform" 
-                      style={{ height: `${Math.random() * 80 + 20}%`, animationDelay: `${i * 0.1}s` }}
+                      style={{ height: `${WAVEFORM_HEIGHTS[i]}%`, animationDelay: `${i * 0.1}s` }}
                     />
                   ))}
                 </>
