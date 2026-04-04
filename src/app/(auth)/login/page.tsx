@@ -1,11 +1,61 @@
+"use client";
+
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Shield, BarChart2, Mail, Lock, Eye, ArrowRight } from 'lucide-react';
+import { Shield, BarChart2, Mail, Lock, Eye, ArrowRight, Loader2 } from 'lucide-react';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { useAuth, useFirestore } from '@/firebase';
+import { useToast } from '@/hooks/use-toast';
 
 export default function LoginPage() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const auth = useAuth();
+  const db = useFirestore();
+  const router = useRouter();
+  const { toast } = useToast();
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!auth || !db) return;
+
+    setLoading(true);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const userData = userDoc.data();
+
+      toast({
+        title: "Signed In",
+        description: `Welcome back, ${user.displayName || 'Patient'}.`,
+      });
+
+      if (userData?.role === 'doctor') {
+        router.push('/doctor/dashboard');
+      } else {
+        router.push('/dashboard');
+      }
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Login Failed",
+        description: error.message || "Invalid credentials.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
       <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-primary/5 rounded-full blur-[120px]"></div>
@@ -46,12 +96,19 @@ export default function LoginPage() {
                 <p className="text-secondary text-sm font-medium uppercase tracking-widest opacity-80">Access Your Health Records</p>
               </div>
               
-              <form className="space-y-6">
+              <form onSubmit={handleLogin} className="space-y-6">
                 <div className="space-y-2">
                   <Label className="text-xs font-mono uppercase tracking-widest text-secondary pl-1">Email / Phone Number</Label>
                   <div className="relative group">
                     <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                    <Input className="bg-background/50 border-white/10 rounded-2xl px-12 py-7 transition-all focus:ring-primary/20 font-mono text-sm" placeholder="patient@example.com" />
+                    <Input 
+                      required
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="bg-background/50 border-white/10 rounded-2xl px-12 py-7 transition-all focus:ring-primary/20 font-mono text-sm" 
+                      placeholder="patient@example.com" 
+                    />
                   </div>
                 </div>
 
@@ -62,7 +119,14 @@ export default function LoginPage() {
                   </div>
                   <div className="relative group">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                    <Input type="password" className="bg-background/50 border-white/10 rounded-2xl px-12 py-7 transition-all focus:ring-primary/20 font-mono text-sm" placeholder="••••••••••••" />
+                    <Input 
+                      required
+                      type="password" 
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="bg-background/50 border-white/10 rounded-2xl px-12 py-7 transition-all focus:ring-primary/20 font-mono text-sm" 
+                      placeholder="••••••••••••" 
+                    />
                     <button type="button" className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-secondary">
                       <Eye className="w-5 h-5" />
                     </button>
@@ -70,11 +134,12 @@ export default function LoginPage() {
                 </div>
 
                 <div className="pt-4 space-y-4">
-                  <Button asChild className="w-full bg-gradient-to-br from-primary to-secondary text-primary-foreground font-headline font-bold py-7 rounded-full shadow-lg shadow-primary/10 active:scale-[0.98] transition-all flex items-center justify-center gap-2 group">
-                    <Link href="/dashboard">
-                      <span>Sign In</span>
-                      <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-                    </Link>
+                  <Button 
+                    type="submit" 
+                    disabled={loading}
+                    className="w-full bg-gradient-to-br from-primary to-secondary text-primary-foreground font-headline font-bold py-7 rounded-full shadow-lg shadow-primary/10 active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
+                  >
+                    {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Sign In</span> <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" /></>}
                   </Button>
                   
                   <div className="relative flex items-center py-2">
@@ -83,7 +148,7 @@ export default function LoginPage() {
                     <div className="flex-grow border-t border-white/5"></div>
                   </div>
 
-                  <Button variant="outline" className="w-full bg-card/40 border-white/10 text-foreground font-semibold py-7 rounded-full hover:bg-card/60 transition-colors flex items-center justify-center gap-3">
+                  <Button variant="outline" type="button" className="w-full bg-card/40 border-white/10 text-foreground font-semibold py-7 rounded-full hover:bg-card/60 transition-colors flex items-center justify-center gap-3">
                     <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center overflow-hidden">
                       <Image 
                         src="https://picsum.photos/seed/google/32/32" 

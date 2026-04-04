@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { 
@@ -8,11 +8,11 @@ import {
   Square, 
   Loader2, 
   Globe, 
-  Languages, 
   AlertCircle,
   CheckCircle2,
   Navigation,
-  ArrowRight
+  ArrowRight,
+  Languages
 } from 'lucide-react';
 import { patientVoiceSymptomCapture } from '@/ai/flows/patient-voice-symptom-capture-flow';
 import { clinicalTriageSeverityAssessment } from '@/ai/flows/clinical-triage-severity-assessment-flow';
@@ -22,6 +22,7 @@ import { useFirestore, useUser } from '@/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { useToast } from '@/hooks/use-toast';
 
 const LANGUAGES = [
   { name: 'English', code: 'en-US' },
@@ -38,61 +39,108 @@ export function TriageInterface() {
   const [step, setStep] = useState<'lang' | 'record' | 'processing' | 'result'>('lang');
   const [selectedLang, setSelectedLang] = useState(LANGUAGES[0]);
   const [isRecording, setIsRecording] = useState(false);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [result, setResult] = useState<{
     capture: PatientVoiceSymptomCaptureOutput;
     assessment: ClinicalTriageSeverityAssessmentOutput;
   } | null>(null);
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const { user } = useUser();
   const db = useFirestore();
+  const { toast } = useToast();
 
-  const startRecording = () => {
-    setIsRecording(true);
-    setStep('record');
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        processAudio(blob);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Microphone Access Denied",
+        description: "Please enable microphone permissions to use voice triage.",
+      });
+    }
   };
 
-  const stopRecording = async () => {
-    setIsRecording(false);
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const processAudio = async (blob: Blob) => {
     setStep('processing');
     
     try {
-      const captureData = await patientVoiceSymptomCapture({
-        audioDataUri: "data:audio/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK7oEIDgQFC8oEEQvOBCEKCh06Sgj0hREK",
-        nativeLanguageCode: selectedLang.code
-      });
-
-      const assessmentData = await clinicalTriageSeverityAssessment({
-        symptomDescription: captureData.translatedTextEnglish
-      });
-
-      setResult({ capture: captureData, assessment: assessmentData });
-      
-      if (user && db) {
-        const sessionData = {
-          userId: user.uid,
-          userName: user.displayName || 'Anonymous Patient',
-          nativeLanguage: selectedLang.name,
-          transcribedTextNative: captureData.transcribedTextNative,
-          translatedTextEnglish: captureData.translatedTextEnglish,
-          severityScore: assessmentData.severityScore,
-          guidance: assessmentData.guidance,
-          createdAt: serverTimestamp(),
-          status: 'active'
-        };
-
-        const sessionsRef = collection(db, 'triageSessions');
-        addDoc(sessionsRef, sessionData).catch(async (error) => {
-          const permissionError = new FirestorePermissionError({
-            path: 'triageSessions',
-            operation: 'create',
-            requestResourceData: sessionData,
-          });
-          errorEmitter.emit('permission-error', permissionError);
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result as string;
+        
+        const captureData = await patientVoiceSymptomCapture({
+          audioDataUri: base64Audio,
+          nativeLanguageCode: selectedLang.code
         });
-      }
 
-      setStep('result');
+        const assessmentData = await clinicalTriageSeverityAssessment({
+          symptomDescription: captureData.translatedTextEnglish
+        });
+
+        setResult({ capture: captureData, assessment: assessmentData });
+        
+        if (user && db) {
+          const sessionData = {
+            userId: user.uid,
+            userName: user.displayName || 'Anonymous Patient',
+            nativeLanguage: selectedLang.name,
+            transcribedTextNative: captureData.transcribedTextNative,
+            translatedTextEnglish: captureData.translatedTextEnglish,
+            severityScore: assessmentData.severityScore,
+            guidance: assessmentData.guidance,
+            createdAt: serverTimestamp(),
+            status: 'active'
+          };
+
+          const sessionsRef = collection(db, 'triageSessions');
+          addDoc(sessionsRef, sessionData).catch(async (error) => {
+            const permissionError = new FirestorePermissionError({
+              path: 'triageSessions',
+              operation: 'create',
+              requestResourceData: sessionData,
+            });
+            errorEmitter.emit('permission-error', permissionError);
+          });
+        }
+
+        setStep('result');
+      };
     } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Processing Failed",
+        description: "Could not analyze the voice data. Please try again.",
+      });
       setStep('lang');
     }
   };
@@ -147,7 +195,7 @@ export function TriageInterface() {
         <Card className="glass-card rounded-[2.5rem] border-white/5 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <CardContent className="p-10 text-center space-y-12">
             <div className="space-y-4">
-              <h2 className="text-3xl font-headline font-bold">Listening...</h2>
+              <h2 className="text-3xl font-headline font-bold">{isRecording ? "Listening..." : "Ready to Record"}</h2>
               <p className="text-muted-foreground">Language: <span className="text-primary font-bold">{selectedLang.name}</span></p>
             </div>
 
@@ -158,7 +206,7 @@ export function TriageInterface() {
                     <div 
                       key={i}
                       className="w-1.5 bg-primary rounded-full animate-waveform" 
-                      style={{ height: `${WAVEFORM_HEIGHTS[i]}%`, animationDelay: `${i * 0.1}s` }}
+                      style={{ height: `${WAVEFORM_HEIGHTS[i % WAVEFORM_HEIGHTS.length]}%`, animationDelay: `${i * 0.1}s` }}
                     />
                   ))}
                 </>
