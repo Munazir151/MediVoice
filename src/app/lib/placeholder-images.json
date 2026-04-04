@@ -24,6 +24,48 @@
       "description": "Professional headshot of a healthcare administrator",
       "imageUrl": "https://picsum.photos/seed/admin1/400/400",
       "imageHint": "business professional"
+    },
+    {
+      "id": "server-room",
+      "description": "Futuristic server room with glowing teal cables",
+      "imageUrl": "https://picsum.photos/seed/server/800/600",
+      "imageHint": "server room"
+    },
+    {
+      "id": "arjun-sharma",
+      "description": "Portrait of Lead AI Architect",
+      "imageUrl": "https://picsum.photos/seed/team1/400/400",
+      "imageHint": "man portrait"
+    },
+    {
+      "id": "priya-iyer",
+      "description": "Portrait of Product Strategy lead",
+      "imageUrl": "https://picsum.photos/seed/team2/400/400",
+      "imageHint": "woman portrait"
+    },
+    {
+      "id": "rohan-gupta",
+      "description": "Portrait of Infrastructure Engineer",
+      "imageUrl": "https://picsum.photos/seed/team3/400/400",
+      "imageHint": "man office"
+    },
+    {
+      "id": "meera-das",
+      "description": "Portrait of Medical Compliance lead",
+      "imageUrl": "https://picsum.photos/seed/team4/400/400",
+      "imageHint": "woman professional"
+    },
+    {
+      "id": "support-agent",
+      "description": "Support technician with headset",
+      "imageUrl": "https://picsum.photos/seed/support/400/400",
+      "imageHint": "support agent"
+    },
+    {
+      "id": "doctor-vane",
+      "description": "Dr. Julian Vane, Emergency Specialist",
+      "imageUrl": "https://picsum.photos/seed/vane/400/400",
+      "imageHint": "doctor stethoscope"
     }
   ]
 }
