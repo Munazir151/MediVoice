@@ -1,0 +1,64 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper to check if the user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Helper to check if the user is a doctor (safely check if document exists)
+    function isDoctor() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'doctor';
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /patientProfiles/{userId} {
+      // Patients can read/write their own health profile
+      allow read, write: if isOwner(userId);
+    }
+
+    match /triageSessions/{sessionId} {
+      // Anyone authenticated can create triage sessions
+      allow create: if isAuthenticated();
+      // Users can read their own sessions or doctors can read any
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isDoctor());
+      // Users can update their own sessions
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      // Users can delete their own sessions
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    match /appointments/{appointmentId} {
+      // Anyone authenticated can create appointments
+      allow create: if isAuthenticated();
+      // Users can read their own appointments or doctors can read any
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isDoctor());
+      // Users can update their own appointments
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      // Users can delete their own appointments
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    match /doctorHandoffs/{handoffId} {
+      // Anyone authenticated can create doctor handoffs
+      allow create: if isAuthenticated();
+      // Users can read their own handoffs or doctors can read any
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isDoctor());
+      // Users can update their own handoffs
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      // Users can delete their own handoffs
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+  }
+}

@@ -1,0 +1,22 @@
+[tool.fastapi]
+# FastAPI Cloud deployment configuration
+
+# App entry point
+app = "app.main:app"
+
+# Python version
+python_version = "3.13"
+
+# Environment variables (set these in FastAPI Cloud dashboard)
+# These should be configured in the deployment environment:
+# - QDRANT_URL: Cloud Qdrant instance URL
+# - QDRANT_API_KEY: Qdrant API key for cloud
+# - VAPI_API_KEY: VAPI voice service key
+# - GEMINI_API_KEY: Google Gemini API key
+# - CORS_ORIGINS: Comma-separated allowed origins (include your frontend URL)
+
+# Optional: Production settings
+[tool.fastapi.production]
+# Uvicorn will use these settings automatically
+workers = 4
+log_level = "info"
