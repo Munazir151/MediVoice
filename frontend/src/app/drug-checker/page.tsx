@@ -571,8 +571,8 @@ export default function DrugCheckerPage() {
                           Safety warnings (with guardrails)
                         </div>
                         <ul className="space-y-1">
-                          {effectiveWarnings.map((warning) => (
-                            <li key={warning}>• {warning}</li>
+                          {effectiveWarnings.map((warning, index) => (
+                            <li key={`warning-${index}-${warning}`}>• {warning}</li>
                           ))}
                         </ul>
                       </div>

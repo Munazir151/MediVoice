@@ -603,9 +603,6 @@ Designed for Indian telecom infrastructure realities
 - [Backend Accuracy Guide](backend/ACCURACY_GUIDE.md)
 - [Backend Deployment Guide](backend/DEPLOYMENT.md)
 - [Frontend Documentation](frontend/README.md)
-- [5-Minute Demo Script](DEMO_SCRIPT_5MIN.md)
-- [12-Minute Demo Script](DEMO_SCRIPT.md)
-- [Gamma AI PowerPoint Prompt](GAMMA_AI_PROMPT.md)
 
 ---
 
@@ -623,21 +620,6 @@ We welcome contributions! Please:
 - **Backend**: Follow FastAPI best practices, add type hints, write tests
 - **Frontend**: Use TypeScript, follow React patterns, test components
 - **Documentation**: Update docs when adding features
-
----
-
-## 📞 Support & Contact
-
-- 📧 **Email**: [contact email]
-- 🌐 **Website**: [website]
-- 📱 **Demo**: [booking link]
-- 💬 **GitHub Issues**: Report bugs and feature requests
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 

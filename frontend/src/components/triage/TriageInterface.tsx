@@ -1398,8 +1398,8 @@ export function TriageInterface({
                 <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Validation notes</p>
                 {result.validationNotes && result.validationNotes.length > 0 ? (
                   <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    {result.validationNotes.slice(0, 4).map((note) => (
-                      <li key={note}>- {note}</li>
+                    {result.validationNotes.slice(0, 4).map((note, index) => (
+                      <li key={`validation-note-${index}-${note}`}>- {note}</li>
                     ))}
                   </ul>
                 ) : (
@@ -1410,8 +1410,8 @@ export function TriageInterface({
                 <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Evidence summary</p>
                 {result.evidenceSummary && result.evidenceSummary.length > 0 ? (
                   <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    {result.evidenceSummary.slice(0, 4).map((evidence) => (
-                      <li key={evidence}>- {evidence}</li>
+                    {result.evidenceSummary.slice(0, 4).map((evidence, index) => (
+                      <li key={`evidence-${index}-${evidence}`}>- {evidence}</li>
                     ))}
                   </ul>
                 ) : (
@@ -1458,8 +1458,8 @@ export function TriageInterface({
                     <p className="text-xs font-mono uppercase tracking-widest text-primary">Care Checklist Until Consultation</p>
                   </div>
                   <div className="space-y-1.5">
-                    {homeCareTips.map((tip) => (
-                      <div key={tip} className="flex items-start gap-2">
+                    {homeCareTips.map((tip, index) => (
+                      <div key={`care-tip-${index}-${tip}`} className="flex items-start gap-2">
                         <CheckCircle2 className="mt-0.5 h-4 w-4 text-primary/80" />
                         <p className="text-sm text-muted-foreground">{tip}</p>
                       </div>
@@ -1550,8 +1550,8 @@ export function TriageInterface({
                       onChange={(event) => setDoctorType(event.target.value)}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                     >
-                      {doctorTypeOptions.map((option) => (
-                        <option key={option} value={option}>{option}</option>
+                      {doctorTypeOptions.map((option, index) => (
+                        <option key={`doctor-type-${index}-${option}`} value={option}>{option}</option>
                       ))}
                     </select>
                   </label>
@@ -1571,9 +1571,9 @@ export function TriageInterface({
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">Available slots</span>
                       <div className="flex flex-wrap gap-2">
-                        {availableSlots.slice(0, 6).map((slot) => (
+                        {availableSlots.slice(0, 6).map((slot, index) => (
                           <Button
-                            key={slot}
+                            key={`slot-${index}-${slot}`}
                             type="button"
                             variant="outline"
                             size="sm"
