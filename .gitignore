@@ -42,6 +42,16 @@ next-env.d.ts
 
 .genkit/*
 .env*
+frontend/.env.local
+frontend/.env*
+backend/.env
+backend/.env.*
+*service-account*.json
+*credentials*.json
+
+# Index and modified files
+.idx
+.modified
 
 # firebase
 firebase-debug.log
