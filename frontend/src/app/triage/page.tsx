@@ -195,6 +195,12 @@ export default function TriagePage() {
     const hasResult = Boolean(triageState.result);
     const translatedText = triageState.result?.capture.translatedTextEnglish ?? '';
     const liveTranscriptText = typeof triageState.liveTranscript === 'string' ? triageState.liveTranscript : '';
+    const liveTranscriptPreview = liveTranscriptText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-2)
+      .join('\n\n');
     const problemFallback = triageState.result?.problem ? [triageState.result.problem] : undefined;
     const severityLevel = triageState.result?.assessment.severityScore;
     const score = getSeverityScore(severityLevel);
@@ -217,7 +223,7 @@ export default function TriagePage() {
       symptoms: hasResult ? extractSymptoms(translatedText, problemFallback) : ['Waiting for symptom details'],
       transcriptText: hasResult
         ? translatedText
-        : liveTranscriptText.trim() || 'Tap Start Voice to begin.',
+        : liveTranscriptPreview || 'Tap Start Voice to begin.',
     };
   }, [triageState]);
 
@@ -381,7 +387,7 @@ export default function TriagePage() {
                 <div className="mt-3 space-y-3 text-sm text-slate-300">
                   <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                     <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-primary/70">Transcript</p>
-                    <p className="mt-1 text-muted-foreground">{panelView.transcriptText}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{panelView.transcriptText}</p>
                   </div>
 
                   <div className="rounded-xl border border-white/10 bg-white/5 p-3">

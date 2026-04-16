@@ -9,6 +9,12 @@ from uuid import uuid4
 
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -204,16 +210,19 @@ def ensure_collection(qdrant_service: QdrantService, recreate: bool) -> None:
     collection_name = qdrant_service.settings.qdrant_collection_name
     vector_size = max(8, qdrant_service.settings.qdrant_vector_size)
 
-    if recreate:
-        qdrant_service.client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
-        )
-        return
-
     try:
+        if recreate:
+            logger.info(f"Recreating collection: {collection_name}")
+            qdrant_service.client.recreate_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            )
+            return
+
+        logger.info(f"Checking if collection exists: {collection_name}")
         qdrant_service.client.get_collection(collection_name)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Collection not found or error occurred: {e}. Creating collection: {collection_name}")
         qdrant_service.client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
@@ -223,37 +232,56 @@ def ensure_collection(qdrant_service: QdrantService, recreate: bool) -> None:
 def index_cases(source_file: str | None, recreate: bool) -> int:
     settings = get_settings()
     qdrant_service = QdrantService(settings)
-    ensure_collection(qdrant_service, recreate=recreate)
 
-    cases = load_cases(source_file)
+    try:
+        ensure_collection(qdrant_service, recreate=recreate)
+    except Exception as e:
+        logger.error(f"Failed to ensure collection: {e}")
+        return 0
+
+    try:
+        cases = load_cases(source_file)
+        logger.info(f"Loaded {len(cases)} cases from source.")
+    except Exception as e:
+        logger.error(f"Failed to load cases: {e}")
+        return 0
+
     points: list[PointStruct] = []
 
     for case in cases:
-        text = build_case_text(case)
-        vector = qdrant_service._embed_text(text)
+        try:
+            text = build_case_text(case)
+            vector = qdrant_service._embed_text(text)
 
-        payload = {
-            "problem_label": str(case.get("problem_label") or "Unknown problem"),
-            "severity_score": str(case.get("severity_score") or "Yellow"),
-            "red_flags": list(case.get("red_flags") or []),
-            "specialty": case.get("specialty"),
-            "summary": case.get("summary") or text,
-            "source_text": text,
-        }
+            payload = {
+                "problem_label": str(case.get("problem_label") or "Unknown problem"),
+                "severity_score": str(case.get("severity_score") or "Yellow"),
+                "red_flags": list(case.get("red_flags") or []),
+                "specialty": case.get("specialty"),
+                "summary": case.get("summary") or text,
+                "source_text": text,
+            }
 
-        points.append(
-            PointStruct(
-                id=str(case.get("id") or uuid4()),
-                vector=vector,
-                payload=payload,
+            points.append(
+                PointStruct(
+                    id=str(case.get("id") or uuid4()),
+                    vector=vector,
+                    payload=payload,
+                )
             )
-        )
+        except Exception as e:
+            logger.error(f"Failed to process case: {case}. Error: {e}")
 
-    qdrant_service.client.upsert(
-        collection_name=settings.qdrant_collection_name,
-        points=points,
-        wait=True,
-    )
+    try:
+        qdrant_service.client.upsert(
+            collection_name=settings.qdrant_collection_name,
+            points=points,
+            wait=True,
+        )
+        logger.info(f"Successfully indexed {len(points)} cases into Qdrant.")
+    except Exception as e:
+        logger.error(f"Failed to upsert points into Qdrant: {e}")
+        return 0
 
     return len(points)
 
@@ -275,9 +303,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
-    indexed = index_cases(source_file=args.source, recreate=args.recreate)
-    print(f"Indexed {indexed} symptom cases into Qdrant collection.")
+    try:
+        args = parse_args()
+        indexed = index_cases(source_file=args.source, recreate=args.recreate)
+        logger.info(f"Indexed {indexed} symptom cases into Qdrant collection.")
+    except Exception as e:
+        logger.critical(f"Critical failure in main: {e}")
 
 
 if __name__ == "__main__":

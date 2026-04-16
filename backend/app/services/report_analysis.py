@@ -5,6 +5,7 @@ import base64
 import itertools
 import json
 import re
+import random
 from dataclasses import dataclass
 
 import fitz  # PyMuPDF
@@ -128,6 +129,22 @@ class MedicalReportAnalysisService:
         return status_code == 429 or 500 <= status_code < 600
 
     @staticmethod
+    def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get('Retry-After')
+        if retry_after:
+            try:
+                seconds = float(retry_after)
+                if seconds > 0:
+                    return min(seconds, 20.0)
+            except ValueError:
+                pass
+
+        # Exponential backoff with light jitter to reduce synchronized retries.
+        base = min(2 ** attempt, 16)
+        jitter = random.uniform(0.0, 0.35)
+        return base + jitter
+
+    @staticmethod
     def _extract_json(text: str) -> dict | None:
         body = text.strip()
         if body.startswith('```'):
@@ -155,6 +172,9 @@ class MedicalReportAnalysisService:
 
     def _has_openrouter_config(self) -> bool:
         return bool(self.settings.openrouter_api_key and (self.settings.openrouter_model or self.settings.llm_model))
+
+    def _has_gemini_config(self) -> bool:
+        return bool(self.settings.gemini_api_key or self.settings.google_api_key)
 
     @staticmethod
     def _build_openrouter_content(parts: list[dict], prompt: str) -> list[dict]:
@@ -211,20 +231,20 @@ class MedicalReportAnalysisService:
 
         last_response: httpx.Response | None = None
         async with httpx.AsyncClient(timeout=90.0) as client:
-            for attempt in range(3):
+            for attempt in range(5):
                 response = await client.post(endpoint, json=payload, headers=headers)
                 last_response = response
 
                 if response.status_code < 400:
                     break
 
-                if not self._is_retryable_status(response.status_code) or attempt == 2:
+                if not self._is_retryable_status(response.status_code) or attempt == 4:
                     detail = self._response_error_detail(response)
                     if detail:
                         raise ReportAnalysisError(f'OpenRouter request failed ({response.status_code}): {detail}')
                     raise ReportAnalysisError(f'OpenRouter request failed ({response.status_code}).')
 
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(self._retry_delay_seconds(response, attempt))
 
         if last_response is None or last_response.status_code >= 400:
             raise ReportAnalysisError('OpenRouter request failed.')
@@ -248,14 +268,109 @@ class MedicalReportAnalysisService:
 
         return parsed
 
+    async def _call_gemini_json(self, parts: list[dict], prompt: str) -> dict:
+        api_key = self.settings.gemini_api_key or self.settings.google_api_key
+        if not api_key:
+            raise ReportAnalysisError('Gemini API key not configured.')
+
+        model = self.settings.llm_model if (self.settings.llm_model or '').startswith('gemini-') else 'gemini-2.5-flash'
+        endpoint = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+        headers = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': api_key,
+        }
+
+        gemini_parts: list[dict] = [{'text': prompt}]
+        for part in parts:
+            inline_data = part.get('inline_data') if isinstance(part, dict) else None
+            if not isinstance(inline_data, dict):
+                continue
+
+            image_data = str(inline_data.get('data') or '')
+            if not image_data:
+                continue
+
+            gemini_parts.append(
+                {
+                    'inline_data': {
+                        'mime_type': str(inline_data.get('mime_type') or 'image/png'),
+                        'data': image_data,
+                    }
+                }
+            )
+
+        payload = {
+            'contents': [
+                {
+                    'role': 'user',
+                    'parts': gemini_parts,
+                }
+            ],
+            'generationConfig': {
+                'temperature': 0.2,
+                'responseMimeType': 'application/json',
+            },
+        }
+
+        last_response: httpx.Response | None = None
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            for attempt in range(5):
+                response = await client.post(endpoint, params={'key': api_key}, json=payload, headers=headers)
+                last_response = response
+
+                if response.status_code < 400:
+                    break
+
+                if not self._is_retryable_status(response.status_code) or attempt == 4:
+                    detail = self._response_error_detail(response)
+                    if detail:
+                        raise ReportAnalysisError(f'Gemini request failed ({response.status_code}): {detail}')
+                    raise ReportAnalysisError(f'Gemini request failed ({response.status_code}).')
+
+                await asyncio.sleep(self._retry_delay_seconds(response, attempt))
+
+        if last_response is None or last_response.status_code >= 400:
+            raise ReportAnalysisError('Gemini request failed.')
+
+        data = last_response.json()
+        candidates = data.get('candidates') if isinstance(data, dict) else []
+        if not candidates or not isinstance(candidates[0], dict):
+            raise ReportAnalysisError('Gemini returned no candidates.')
+
+        content = candidates[0].get('content')
+        parts_content = content.get('parts') if isinstance(content, dict) else []
+        text = ''
+        if isinstance(parts_content, list):
+            text = ''.join(str(part.get('text') or '') for part in parts_content if isinstance(part, dict))
+
+        parsed = self._extract_json(text)
+        if not parsed:
+            raise ReportAnalysisError('Gemini returned invalid JSON.')
+
+        return parsed
+
     async def _call_structured_llm(self, parts: list[dict], prompt: str) -> dict:
         if not self.settings.llm_enabled:
             raise ReportAnalysisError('LLM processing is disabled.')
 
-        if not self._has_openrouter_config():
-            raise ReportAnalysisError('OpenRouter API key/model not configured.')
+        errors: list[str] = []
 
-        return await self._call_openrouter_json(parts, prompt)
+        if self._has_openrouter_config():
+            try:
+                return await self._call_openrouter_json(parts, prompt)
+            except ReportAnalysisError as exc:
+                errors.append(str(exc))
+
+        if self._has_gemini_config():
+            try:
+                return await self._call_gemini_json(parts, prompt)
+            except ReportAnalysisError as exc:
+                errors.append(str(exc))
+
+        if errors:
+            raise ReportAnalysisError('; '.join(errors))
+
+        raise ReportAnalysisError('No LLM provider is configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY.')
 
     async def _extract_structured(
         self,

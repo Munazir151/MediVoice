@@ -64,6 +64,14 @@ const DOCTOR_DIRECTORY: DoctorDirectoryItem[] = [
     city: 'Bengaluru',
     availableTimes: ['09:30', '11:45', '15:45', '19:00'],
   },
+  {
+    id: 'oph-1',
+    name: 'Dr. Aisha Kapoor',
+    specialty: 'Ophthalmologist',
+    clinicName: 'BrightSight Eye Care',
+    city: 'Bengaluru',
+    availableTimes: ['09:15', '12:30', '16:15', '18:45'],
+  },
 ];
 
 export function getDoctorsBySpecialty(specialty: string): DoctorDirectoryItem[] {

@@ -72,6 +72,15 @@ export const CLINIC_DIRECTORY: ClinicDirectoryItem[] = [
     lng: 77.6473,
   },
   {
+    id: 'clinic-8',
+    name: 'BrightSight Eye Care',
+    specialty: 'Ophthalmologist',
+    schemesAccepted: ['Ayushman Bharat (PM-JAY)', 'State Health Scheme'],
+    address: 'Indiranagar, Bengaluru',
+    lat: 12.9712,
+    lng: 77.6416,
+  },
+  {
     id: 'clinic-7',
     name: 'CityCare Family Center',
     specialty: 'General Practitioner',

@@ -116,6 +116,30 @@ class DrugInteractionCheckResponse(BaseModel):
     matches: list[DrugInteractionMatch] = Field(default_factory=list)
 
 
+class ExtractedMedicalDataResponse(BaseModel):
+    """Structured medical data extracted from voice transcript by LLM."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    chief_complaint: str = Field(description='Primary reason for visit')
+    symptoms: list[str] = Field(description='Normalized, accurate symptoms extracted from transcript')
+    symptom_duration: str = Field(description='How long symptoms have been present')
+    symptom_severity: Literal['Mild', 'Moderate', 'Severe'] = Field(description='Patient-reported severity')
+    medical_history: list[str] = Field(description='Past medical conditions and surgeries')
+    current_medications: list[str] = Field(description='Medications patient is currently taking')
+    known_allergies: list[str] = Field(description='Known drug, food, and environmental allergies')
+    associated_findings: list[str] = Field(description='Vitals, observations, measurements mentioned')
+    patient_occupation: str | None = Field(default=None, description='Patient occupational status if mentioned')
+    relevant_context: str = Field(description='Social/lifestyle factors and other relevant context')
+
+
+class TranscriptToMedicalDataRequest(BaseModel):
+    """Request to extract structured medical data from voice transcript."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    transcript: str = Field(description='Voice transcript from patient')
+    language_code: str = Field(default='en-US', alias='languageCode', description='Patient language code')
+
+
 class TriageAnalyzeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -156,6 +180,11 @@ class TriageAnalyzeResponse(BaseModel):
     overall_confidence: float = Field(ge=0.0, le=1.0, description='Confidence score for result accuracy (0-1)')
     validation_notes: list[str] = Field(default_factory=list, description='Validation reasoning for results')
     evidence_summary: list[str] = Field(default_factory=list, description='Evidence backing the triage result')
+    # Transcript details
+    vapi_transcript_native: str | None = Field(default=None, description='VAPI speech-to-text transcript in patient language')
+    vapi_transcript_english: str | None = Field(default=None, description='VAPI transcript translated to English')
+    user_transcript: str | None = Field(default=None, description='Original user transcript input (for text-based requests)')
+
 
 
 class TriageReportRequest(BaseModel):

@@ -28,10 +28,13 @@ from app.schemas.triage import (
     VoiceSessionCreateResponse,
     VoiceTranscribeRequest,
     VoiceTranscribeResponse,
+    ExtractedMedicalDataResponse,
+    TranscriptToMedicalDataRequest,
 )
 from app.services.qdrant import QdrantService
 from app.services.vapi import VapiService
 from app.services.llm_triage import LlmTriageService
+from app.services.transcript_to_medical_data import TranscriptToMedicalDataService
 from app.services.drug_database import DrugDatabaseService
 from app.services.result_validator import ResultValidator
 
@@ -105,14 +108,19 @@ def _filter_relevant_matches(matches: list[object], transcript: str, top_k: int 
 
 
 def _should_surface_schemes(transcript: str) -> bool:
+    """Check if user explicitly asked about schemes (optional - for future analytics)."""
     lowered = transcript.lower()
     return any(term in lowered for term in SCHEME_INTENT_TERMS)
 
 
 def _filter_scheme_matches(matches: list[object], transcript: str, top_k: int = 5) -> list[object]:
-    if not _should_surface_schemes(transcript):
-        return []
-
+    """Filter scheme matches by relevance score. Always surface schemes when medically relevant.
+    
+    IMPORTANT: We do NOT check _should_surface_schemes() here. Schemes should always
+    be shown to patients who are medically eligible, regardless of whether they
+    explicitly asked about cost/insurance. The LLM fallback will intelligently
+    suggest relevant schemes for any condition.
+    """
     filtered = [
         match for match in matches
         if float(getattr(match, 'score', 0.0) or 0.0) >= SCHEME_RELEVANCE_SCORE_MIN
@@ -363,6 +371,61 @@ async def transcribe_voice(
     )
 
 
+@knowledge_router.post('/extract-medical-data', response_model=ExtractedMedicalDataResponse)
+async def extract_medical_data(
+    payload: TranscriptToMedicalDataRequest,
+    settings: Settings = Depends(get_settings),
+) -> ExtractedMedicalDataResponse:
+    """
+    Extract structured medical data from voice transcript.
+    
+    Processes raw transcript through LLM to extract:
+    - Chief complaint
+    - Symptoms (normalized and accurate)
+    - Duration
+    - Severity
+    - Medical history
+    - Current medications
+    - Allergies
+    - Associated findings
+    - Occupational info
+    - Relevant context
+    
+    Returns validated medical data, NOT raw transcript.
+    """
+    extractor = TranscriptToMedicalDataService(settings)
+    
+    if not extractor.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail='Medical data extraction service is not available. LLM not configured.',
+        )
+    
+    try:
+        extracted = await extractor.extract(payload.transcript, payload.language_code)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f'Extraction failed: {str(exc)}') from exc
+    
+    if not extracted:
+        raise HTTPException(
+            status_code=400,
+            detail='Failed to extract medical data from transcript. Please provide a clearer transcript.',
+        )
+    
+    return ExtractedMedicalDataResponse(
+        chief_complaint=extracted.chief_complaint,
+        symptoms=extracted.symptoms,
+        symptom_duration=extracted.symptom_duration,
+        symptom_severity=extracted.symptom_severity,
+        medical_history=extracted.medical_history,
+        current_medications=extracted.current_medications,
+        known_allergies=extracted.known_allergies,
+        associated_findings=extracted.associated_findings,
+        patient_occupation=extracted.patient_occupation,
+        relevant_context=extracted.relevant_context,
+    )
+
+
 @knowledge_router.post('/search', response_model=KnowledgeSearchResponse)
 async def search_knowledge(
     payload: KnowledgeSearchRequest,
@@ -385,14 +448,33 @@ async def search_scheme_coverage(
     payload: KnowledgeSearchRequest,
     settings: Settings = Depends(get_settings),
 ) -> SchemeCoverageSearchResponse:
+    """Search for insurance scheme coverage applicable to patient's condition.
+    
+    IMPORTANT: This endpoint ALWAYS attempts to surface schemes:
+    1. First: Search Qdrant scheme_collection for vector-matched schemes
+    2. If no Qdrant results: Use LLM (OpenRouter) to intelligently suggest schemes
+    3. The LLM is designed to suggest PM-JAY/CGHS/ESIC for any medical condition
+    
+    This ensures patients always see available coverage options, regardless of
+    whether they explicitly asked about cost or insurance.
+    """
     qdrant = QdrantService(settings)
+    matches: list[SchemeCoverageMatch] = []
+    
     try:
-        matches = await qdrant.search_schemes(payload.transcript, payload.top_k)
-        matches = _filter_scheme_matches(matches, payload.transcript, payload.top_k)
-        if not matches:
+        qdrant_matches = await qdrant.search_schemes(payload.transcript, payload.top_k)
+        matches = _filter_scheme_matches(qdrant_matches, payload.transcript, payload.top_k)
+    except Exception:
+        # Qdrant error or scheme_collection doesn't exist - will fallback to LLM
+        pass
+    
+    # If no Qdrant results, use LLM to intelligently suggest schemes
+    if not matches:
+        try:
             matches = await _openrouter_scheme_fallback(payload.transcript, settings, payload.top_k)
-    except RuntimeError:
-        matches = await _openrouter_scheme_fallback(payload.transcript, settings, payload.top_k)
+        except Exception:
+            # LLM also failed - return empty list, frontend fallback will show PM-JAY + State Health
+            pass
 
     normalized_matches: list[SchemeCoverageMatch] = []
     for match in matches:
@@ -414,6 +496,7 @@ async def analyze_triage(
     vapi = VapiService(settings)
     qdrant = QdrantService(settings)
     llm = LlmTriageService(settings)
+    extractor = TranscriptToMedicalDataService(settings)
     drugs = DrugDatabaseService()
 
     try:
@@ -422,6 +505,13 @@ async def analyze_triage(
         matches = _filter_relevant_matches(raw_matches, transcript.translated_text_english, top_k=5)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    
+    # Extract clean medical data from transcript (not raw transcript)
+    extracted_data = await extractor.extract(
+        transcript=transcript.translated_text_english,
+        language_code=payload.native_language_code,
+    )
+    
     llm_result = await llm.analyze(
         transcript=transcript.translated_text_english,
         language_code=payload.native_language_code,
@@ -456,6 +546,22 @@ async def analyze_triage(
     else:
         problem, severity_score, guidance, red_flags, recommended_action = _fallback_text_triage(payload.transcript)
         summary = payload.transcript
+
+    # Build summary from extracted medical data for clinical accuracy
+    if extracted_data:
+        clinical_summary = (
+            f"Chief Complaint: {extracted_data.chief_complaint}. "
+            f"Symptoms: {', '.join(extracted_data.symptoms)}. "
+            f"Duration: {extracted_data.symptom_duration}. "
+            f"Severity: {extracted_data.symptom_severity}. "
+        )
+        if extracted_data.associated_findings:
+            clinical_summary += f"Findings: {', '.join(extracted_data.associated_findings)}. "
+        if extracted_data.medical_history:
+            clinical_summary += f"Medical History: {', '.join(extracted_data.medical_history)}. "
+        if extracted_data.current_medications:
+            clinical_summary += f"Current Medications: {', '.join(extracted_data.current_medications)}. "
+        summary = clinical_summary.strip()
 
     medicine_suggestions = await drugs.suggest_medicines(
         problem=problem,
@@ -504,15 +610,15 @@ async def analyze_triage(
         capture=VoiceTranscribeResponse(
             session_id=payload.session_id,
             native_language_code=payload.native_language_code,
-            transcribed_text_native=transcript.transcribed_text_native,
-            translated_text_english=transcript.translated_text_english,
+            transcribed_text_native=transcript.transcribed_text_native,  # Raw VAPI transcript
+            translated_text_english=transcript.translated_text_english,  # Raw VAPI transcript (translated)
             detected_language_code=transcript.detected_language_code,
         ),
         assessment=TriageAssessment(
             severity_score=severity_score,
             guidance=guidance,
         ),
-        summary=summary,
+        summary=summary,  # Cleaned clinical summary from extracted medical data
         red_flags=red_flags,
         recommended_action=recommended_action,
         language_code=payload.native_language_code,
@@ -522,6 +628,9 @@ async def analyze_triage(
         overall_confidence=overall_confidence,
         validation_notes=validation_notes,
         evidence_summary=evidence_summary,
+        vapi_transcript_native=transcript.transcribed_text_native,
+        vapi_transcript_english=transcript.translated_text_english,
+        user_transcript=None,  # Not applicable for audio endpoint
     )
 
 
@@ -532,6 +641,7 @@ async def analyze_triage_text(
 ) -> TriageAnalyzeResponse:
     qdrant = QdrantService(settings)
     llm = LlmTriageService(settings)
+    extractor = TranscriptToMedicalDataService(settings)
     drugs = DrugDatabaseService()
 
     qdrant_error: str | None = None
@@ -541,6 +651,12 @@ async def analyze_triage_text(
     except RuntimeError as exc:
         qdrant_error = str(exc)
         matches = []
+
+    # Extract clean medical data from transcript (not raw transcript)
+    extracted_data = await extractor.extract(
+        transcript=payload.transcript,
+        language_code=payload.native_language_code,
+    )
 
     wants_booking = _wants_booking(payload.transcript)
     llm_result = await llm.analyze(
@@ -579,6 +695,22 @@ async def analyze_triage_text(
         problem, severity_score, guidance, red_flags, recommended_action = _fallback_text_triage(payload.transcript)
         _ = qdrant_error
         summary = payload.transcript
+
+    # Build summary from extracted medical data for clinical accuracy
+    if extracted_data:
+        clinical_summary = (
+            f"Chief Complaint: {extracted_data.chief_complaint}. "
+            f"Symptoms: {', '.join(extracted_data.symptoms)}. "
+            f"Duration: {extracted_data.symptom_duration}. "
+            f"Severity: {extracted_data.symptom_severity}. "
+        )
+        if extracted_data.associated_findings:
+            clinical_summary += f"Findings: {', '.join(extracted_data.associated_findings)}. "
+        if extracted_data.medical_history:
+            clinical_summary += f"Medical History: {', '.join(extracted_data.medical_history)}. "
+        if extracted_data.current_medications:
+            clinical_summary += f"Current Medications: {', '.join(extracted_data.current_medications)}. "
+        summary = clinical_summary.strip()
 
     medicine_suggestions = await drugs.suggest_medicines(
         problem=problem,
@@ -627,15 +759,15 @@ async def analyze_triage_text(
         capture=VoiceTranscribeResponse(
             session_id=payload.session_id,
             native_language_code=payload.native_language_code,
-            transcribed_text_native=payload.transcript,
-            translated_text_english=payload.transcript,
+            transcribed_text_native=payload.transcript,  # Raw transcript input
+            translated_text_english=payload.transcript,  # Raw transcript input
             detected_language_code=payload.native_language_code,
         ),
         assessment=TriageAssessment(
             severity_score=severity_score,
             guidance=guidance,
         ),
-        summary=summary,
+        summary=summary,  # Cleaned clinical summary from extracted medical data
         red_flags=red_flags,
         recommended_action=recommended_action,
         language_code=payload.native_language_code,
@@ -645,6 +777,9 @@ async def analyze_triage_text(
         overall_confidence=overall_confidence,
         validation_notes=validation_notes,
         evidence_summary=evidence_summary,
+        vapi_transcript_native=None,  # Not applicable for text endpoint
+        vapi_transcript_english=None,  # Not applicable for text endpoint
+        user_transcript=payload.transcript,  # Original user input
     )
 
 

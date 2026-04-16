@@ -175,6 +175,17 @@ class QdrantService:
             variants.extend(['chest pain', 'shortness of breath'])
         if 'head' in text or 'dizzy' in text:
             variants.extend(['headache', 'dizziness'])
+        if 'eye' in text or 'vision' in text or 'sight' in text or 'glare' in text or 'blur' in text:
+            variants.extend([
+                'eye pain',
+                'vision changes',
+                'blurred vision',
+                'red eye',
+                'conjunctivitis',
+                'cataract',
+                'glaucoma',
+                'light sensitivity',
+            ])
 
         cleaned = ' '.join(self._tokenize_query(transcript))
         if cleaned and cleaned not in variants:

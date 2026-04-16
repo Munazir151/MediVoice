@@ -158,11 +158,96 @@ export function TriageInterface({
   const db = useFirestore();
   const vapiRef = useRef<any>(null);
   const transcriptRef = useRef('');
+  const transcriptTurnsRef = useRef<Array<{ speaker: 'Vapi' | 'Patient'; text: string; finalized: boolean }>>([]);
   const latestUserPartialRef = useRef('');
   const stopRequestedRef = useRef(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const analysisStartedRef = useRef(false);
   const appliedPreloadedSessionRef = useRef<string | null>(null);
+
+  const extractTranscriptText = (value: unknown) => {
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+
+    if (Array.isArray(value)) {
+      return value
+        .map((part: any) => String(part?.text ?? part ?? '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    }
+
+    return String(value ?? '').trim();
+  };
+
+  const syncLiveTranscript = () => {
+    const nextTranscript = transcriptTurnsRef.current.map((turn) => `${turn.speaker}: ${turn.text}`).join('\n');
+    setLiveTranscript(nextTranscript);
+  };
+
+  const recordTranscriptTurn = (speaker: 'Vapi' | 'Patient', text: string, isFinal: boolean) => {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return;
+    }
+
+    const turns = transcriptTurnsRef.current;
+    const lastTurn = turns[turns.length - 1];
+
+    if (lastTurn && lastTurn.speaker === speaker && !lastTurn.finalized) {
+      turns[turns.length - 1] = {
+        speaker,
+        text: normalizedText,
+        finalized: isFinal,
+      };
+    } else {
+      turns.push({
+        speaker,
+        text: normalizedText,
+        finalized: isFinal,
+      });
+    }
+
+    syncLiveTranscript();
+  };
+
+  const applyConversationSnapshot = (messages: any[]) => {
+    const turns: Array<{ speaker: 'Vapi' | 'Patient'; text: string; finalized: boolean }> = [];
+    const userTurns: string[] = [];
+
+    messages.forEach((entry) => {
+      const role = String(entry?.role ?? '').toLowerCase();
+      const speaker = role === 'assistant' ? 'Vapi' : role === 'user' ? 'Patient' : null;
+      if (!speaker) {
+        return;
+      }
+
+      const text = extractTranscriptText(entry?.content);
+      if (!text) {
+        return;
+      }
+
+      turns.push({
+        speaker,
+        text,
+        finalized: true,
+      });
+
+      if (speaker === 'Patient') {
+        userTurns.push(text);
+      }
+    });
+
+    if (turns.length === 0) {
+      return;
+    }
+
+    transcriptTurnsRef.current = turns;
+    transcriptRef.current = userTurns.join(' ').trim();
+    latestUserPartialRef.current = '';
+    syncLiveTranscript();
+  };
 
   useEffect(() => {
     onStateChange?.({
@@ -189,6 +274,9 @@ export function TriageInterface({
     setSessionState('idle');
     setIsRecording(false);
     setLiveTranscript('');
+    transcriptTurnsRef.current = [];
+    transcriptRef.current = '';
+    latestUserPartialRef.current = '';
     setBookingStarted(false);
     setConfirmBooking(false);
     setBookingDone(false);
@@ -318,6 +406,9 @@ export function TriageInterface({
     if (translated.includes('stomach') || translated.includes('abdomen')) fallback.push('Gastroenterologist');
     if (translated.includes('head') || translated.includes('dizzy')) fallback.push('Neurologist');
     if (translated.includes('chest') || translated.includes('breath')) fallback.push('Pulmonologist');
+    if (translated.includes('eye') || translated.includes('vision') || translated.includes('sight') || translated.includes('blur') || translated.includes('glare')) {
+      fallback.push('Ophthalmologist', 'Eye Specialist');
+    }
     return [...new Set(fallback)];
   }, [result]);
 
@@ -658,13 +749,50 @@ export function TriageInterface({
       .slice(0, 2);
   }, [schemeCoverageMatches]);
 
+  const fallbackSchemeMatches = useMemo(() => {
+    if (!result) {
+      return [] as SchemeCoverageMatch[];
+    }
+
+    const baseScore = result.assessment.severityScore === 'Red' ? 0.45 : result.assessment.severityScore === 'Yellow' ? 0.38 : 0.3;
+    return [
+      {
+        id: 'fallback-pmjay',
+        schemeName: 'Ayushman Bharat (PM-JAY)',
+        coverageAmount: 'Verify specialist consultation, diagnostics, and hospitalization coverage',
+        eligibility: 'Check household eligibility and hospital empanelment before booking',
+        score: baseScore,
+        summary: 'Common public health coverage to verify for specialist eye care.',
+      },
+      {
+        id: 'fallback-state-health',
+        schemeName: 'State Health Scheme',
+        coverageAmount: 'Verify outpatient and referral coverage with the local state portal',
+        eligibility: 'Confirm state-specific eligibility and document requirements',
+        score: baseScore - 0.05,
+        summary: 'State schemes can help with follow-up care and specialist visits.',
+      },
+    ];
+  }, [result]);
+
+  const displaySchemeMatches = useMemo(() => {
+    return autoSurfacedSchemes.length > 0 ? autoSurfacedSchemes : fallbackSchemeMatches;
+  }, [autoSurfacedSchemes, fallbackSchemeMatches]);
+
+  const schemeSearchText = useMemo(() => {
+    return [result?.problem, result?.summary, result?.capture.translatedTextEnglish]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .join(' ')
+      .trim();
+  }, [result]);
+
   useEffect(() => {
     const hydrateSchemeCoverage = async () => {
       if (!result || step !== 'result' || schemeCoverageAttemptedRef.current) {
         return;
       }
 
-      const transcript = result.capture.translatedTextEnglish?.trim();
+      const transcript = schemeSearchText;
       if (!transcript) {
         schemeCoverageAttemptedRef.current = true;
         return;
@@ -687,7 +815,7 @@ export function TriageInterface({
     };
 
     void hydrateSchemeCoverage();
-  }, [result, selectedLang.code, step]);
+  }, [result, schemeSearchText, selectedLang.code, step]);
 
   const processTranscript = async (transcript: string) => {
     setStep('processing');
@@ -844,6 +972,7 @@ export function TriageInterface({
 
       setSessionState('connecting');
       transcriptRef.current = '';
+      transcriptTurnsRef.current = [];
       latestUserPartialRef.current = '';
       stopRequestedRef.current = false;
       setLiveTranscript('');
@@ -858,44 +987,34 @@ export function TriageInterface({
       });
 
       vapi.on('message', (message: any) => {
-        const appendUserText = (text: string) => {
-          const normalized = text.trim();
-          if (!normalized) {
-            return;
-          }
-
-          const current = transcriptRef.current.trim();
-          if (!current) {
-            transcriptRef.current = normalized;
-            setLiveTranscript(transcriptRef.current);
-            return;
-          }
-
-          if (!current.endsWith(normalized)) {
-            transcriptRef.current = `${current} ${normalized}`;
-            setLiveTranscript(transcriptRef.current);
-          }
-        };
-
         if (message?.type === 'transcript') {
           const role = String(message?.role ?? message?.speaker ?? message?.from ?? '').toLowerCase();
           const isAssistant = role.includes('assistant') || role.includes('bot') || role.includes('ai');
           const isUser = role.includes('user') || role.includes('caller') || role.includes('patient') || !role;
           const text = String(message?.transcript ?? '').trim();
-          if (isAssistant || !isUser || !text) {
+          if (!text || (!isAssistant && !isUser)) {
             return;
           }
 
+          const speaker = isAssistant ? 'Vapi' : 'Patient';
+
           if (message?.transcriptType === 'partial') {
-            latestUserPartialRef.current = text;
-            const base = transcriptRef.current.trim();
-            setLiveTranscript(base ? `${base} ${text}` : text);
+            recordTranscriptTurn(speaker, text, false);
+            if (speaker === 'Patient') {
+              latestUserPartialRef.current = text;
+            }
             return;
           }
 
           if (message?.transcriptType === 'final') {
-            appendUserText(text);
-            latestUserPartialRef.current = '';
+            recordTranscriptTurn(speaker, text, true);
+            if (speaker === 'Patient') {
+              const current = transcriptRef.current.trim();
+              if (!current.endsWith(text)) {
+                transcriptRef.current = current ? `${current} ${text}` : text;
+              }
+              latestUserPartialRef.current = '';
+            }
           }
           return;
         }
@@ -907,27 +1026,8 @@ export function TriageInterface({
               ? message.messages
               : [];
 
-          const userTurns = updates
-            .filter((entry: any) => String(entry?.role ?? '').toLowerCase() === 'user')
-            .map((entry: any) => {
-              if (typeof entry?.content === 'string') {
-                return entry.content;
-              }
-
-              if (Array.isArray(entry?.content)) {
-                return entry.content
-                  .map((part: any) => String(part?.text ?? part ?? '').trim())
-                  .filter(Boolean)
-                  .join(' ');
-              }
-
-              return '';
-            })
-            .filter(Boolean);
-
-          if (userTurns.length > 0) {
-            transcriptRef.current = userTurns.join(' ').trim();
-            setLiveTranscript(transcriptRef.current);
+          if (updates.length > 0) {
+            applyConversationSnapshot(updates);
           }
         }
       });
@@ -1714,15 +1814,15 @@ export function TriageInterface({
                 </div>
               )}
 
-              {!schemeCoverageLoading && autoSurfacedSchemes.length === 0 && (
+              {!schemeCoverageLoading && displaySchemeMatches.length === 0 && (
                 <div className="rounded-xl border border-border bg-background/40 p-4 text-sm text-muted-foreground">
                   No PM-JAY/CGHS coverage matches surfaced for this triage turn.
                 </div>
               )}
 
-              {!schemeCoverageLoading && autoSurfacedSchemes.length > 0 && (
+              {!schemeCoverageLoading && displaySchemeMatches.length > 0 && (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {autoSurfacedSchemes.map((scheme) => (
+                  {displaySchemeMatches.map((scheme) => (
                     <div key={scheme.id} className="rounded-xl border border-primary/20 bg-primary/5 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
